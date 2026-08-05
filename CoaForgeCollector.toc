@@ -1,0 +1,8 @@
+## Interface: 30300
+## Title: CoaForge Collector
+## Notes: Scans your spellbook and records spell data (id, name, icon, passive flag, tooltip) into your SavedVariables for the CoaForge macro builder (coaforge.com). Never sends anything over the network or to other players -- the data sits on your computer until you choose to import it on the CoaForge website yourself.
+## Author: Beebsis
+## Version: 0.2.0
+## SavedVariables: CoaForgeCollectorDB
+
+CoaForgeCollector.lua
