@@ -325,6 +325,119 @@ local function RelayNewSpells()
 	return queuedCount
 end
 
+-- ===========================================================================
+-- Incoming-data popup queue: a small on-screen toast that appears when
+-- another player's relay data arrives, since receiving something used to
+-- be completely silent. Deliberately not one popup per spell -- a single
+-- relayed scan is dozens of individual spell messages arriving in a
+-- burst, so incoming spells are counted per sender and a single toast
+-- ("Received N spell(s) from X") shows once that sender's burst goes
+-- quiet for RECEIVE_DEBOUNCE_SECONDS (same debounce idea as the scan
+-- scheduler below, applied to receiving instead of scanning). Multiple
+-- toasts queue and show one at a time rather than overlapping or
+-- stacking. Not tested in game yet -- SetBackdrop and the frame
+-- lifecycle here are standard WotLK-era API, but a real playtest is
+-- still needed before trusting the timing/visuals look right.
+-- ===========================================================================
+
+local RECEIVE_DEBOUNCE_SECONDS = 2
+local TOAST_VISIBLE_SECONDS = 4
+local TOAST_WIDTH = 260
+
+local toastQueue = {}
+local activeToastFrame = nil
+
+local function ShowNextToast()
+	if activeToastFrame then
+		return -- one at a time, the next one waits its turn
+	end
+	local item = table.remove(toastQueue, 1)
+	if not item then
+		return
+	end
+
+	local f = CreateFrame("Frame", nil, UIParent)
+	f:SetSize(TOAST_WIDTH, 44)
+	f:SetPoint("TOP", UIParent, "TOP", 0, -80)
+	f:SetBackdrop({
+		bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+		edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+		tile = true,
+		tileSize = 16,
+		edgeSize = 12,
+		insets = { left = 3, right = 3, top = 3, bottom = 3 },
+	})
+	f:SetBackdropColor(0.05, 0.05, 0.05, 0.85)
+	f:SetBackdropBorderColor(0.2, 0.8, 0.6, 1)
+
+	local text = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	text:SetPoint("CENTER", f, "CENTER", 0, 0)
+	text:SetWidth(TOAST_WIDTH - 20)
+	text:SetJustifyH("CENTER")
+	text:SetText(item.text)
+
+	-- Fade in, hold, fade out, then hand off to whatever's next in the
+	-- queue -- one OnUpdate handles the whole lifecycle rather than
+	-- juggling separate timers for each phase.
+	local FADE_IN, HOLD, FADE_OUT = 0.2, TOAST_VISIBLE_SECONDS, 0.4
+	local totalTime = FADE_IN + HOLD + FADE_OUT
+	local elapsed = 0
+	f:SetAlpha(0)
+	f:SetScript("OnUpdate", function(self, dt)
+		elapsed = elapsed + dt
+		if elapsed < FADE_IN then
+			self:SetAlpha(elapsed / FADE_IN)
+		elseif elapsed < FADE_IN + HOLD then
+			self:SetAlpha(1)
+		elseif elapsed < totalTime then
+			self:SetAlpha(1 - (elapsed - FADE_IN - HOLD) / FADE_OUT)
+		else
+			self:SetScript("OnUpdate", nil)
+			self:Hide()
+			self:SetParent(nil)
+			activeToastFrame = nil
+			ShowNextToast()
+		end
+	end)
+
+	activeToastFrame = f
+	f:Show()
+end
+
+local function QueueToast(text)
+	table.insert(toastQueue, { text = text })
+	ShowNextToast()
+end
+
+local pendingReceiveCounts = {} -- [senderName] = count since last flush
+local receiveDebounceFrame = nil
+
+local function FlushReceiveToasts()
+	for sender, count in pairs(pendingReceiveCounts) do
+		QueueToast(string.format("Received %d spell%s from %s", count, count == 1 and "" or "s", sender))
+	end
+	pendingReceiveCounts = {}
+end
+
+local function ScheduleReceiveToast(sender)
+	pendingReceiveCounts[sender] = (pendingReceiveCounts[sender] or 0) + 1
+	if receiveDebounceFrame then
+		receiveDebounceFrame.elapsed = 0
+		return
+	end
+	local f = CreateFrame("Frame")
+	f.elapsed = 0
+	receiveDebounceFrame = f
+	f:SetScript("OnUpdate", function(self, dt)
+		self.elapsed = self.elapsed + dt
+		if self.elapsed >= RECEIVE_DEBOUNCE_SECONDS then
+			self:SetScript("OnUpdate", nil)
+			receiveDebounceFrame = nil
+			FlushReceiveToasts()
+		end
+	end)
+end
+
 local incomingBuffers = {} -- [senderName][spellId] = { total = N, parts = {} }
 
 local function HandleIncomingRelayMessage(message, sender)
@@ -356,6 +469,7 @@ local function HandleIncomingRelayMessage(message, sender)
 		InitDB()
 		CoaForgeCollectorDB.received[sender] = CoaForgeCollectorDB.received[sender] or {}
 		CoaForgeCollectorDB.received[sender][parsedId] = entry
+		ScheduleReceiveToast(sender)
 	end
 end
 
