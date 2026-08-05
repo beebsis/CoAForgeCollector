@@ -75,6 +75,7 @@ local function InitDB()
 	end
 	CoaForgeCollectorDB.relayedSentIds = CoaForgeCollectorDB.relayedSentIds or {}
 	CoaForgeCollectorDB.received = CoaForgeCollectorDB.received or {}
+	CoaForgeCollectorDB.receivedMeta = CoaForgeCollectorDB.receivedMeta or {}
 	CoaForgeCollectorDB.meta.addonVersion = GetAddOnMetadata(ADDON_NAME, "Version")
 end
 
@@ -469,8 +470,127 @@ local function HandleIncomingRelayMessage(message, sender)
 		InitDB()
 		CoaForgeCollectorDB.received[sender] = CoaForgeCollectorDB.received[sender] or {}
 		CoaForgeCollectorDB.received[sender][parsedId] = entry
+		CoaForgeCollectorDB.receivedMeta[sender] = CoaForgeCollectorDB.receivedMeta[sender] or {}
+		CoaForgeCollectorDB.receivedMeta[sender].lastReceivedAt = time()
 		ScheduleReceiveToast(sender)
 	end
+end
+
+-- ===========================================================================
+-- Received-data window: a persistent, reopenable list of who's sent data
+-- and how much, since the popup fades after a few seconds and is easy to
+-- miss (away from keyboard, in combat, alt-tabbed). Lazily built the
+-- first time it's opened, then just repopulated/shown on later opens
+-- rather than recreated. Row count is expected to stay small (a handful
+-- of collector characters at most), so this is a plain fixed list, not a
+-- scroll frame -- would need one if that stops being true. Not tested in
+-- game yet, same caveat as the rest of the relay feature.
+-- ===========================================================================
+
+local receivedWindow = nil
+local receivedWindowRows = {}
+local ROW_HEIGHT = 18
+local WINDOW_WIDTH = 320
+
+local function EnsureReceivedWindowRow(index)
+	if receivedWindowRows[index] then
+		return receivedWindowRows[index]
+	end
+	local row = receivedWindow:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	row:SetPoint("TOPLEFT", receivedWindow, "TOPLEFT", 16, -40 - (index - 1) * ROW_HEIGHT)
+	row:SetPoint("RIGHT", receivedWindow, "RIGHT", -16, 0)
+	row:SetJustifyH("LEFT")
+	receivedWindowRows[index] = row
+	return row
+end
+
+local function CreateReceivedWindow()
+	local f = CreateFrame("Frame", "CoaForgeCollectorReceivedWindow", UIParent)
+	f:SetSize(WINDOW_WIDTH, 160)
+	f:SetPoint("CENTER", UIParent, "CENTER", 0, 100)
+	f:SetBackdrop({
+		bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+		edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+		tile = true,
+		tileSize = 32,
+		edgeSize = 32,
+		insets = { left = 11, right = 11, top = 11, bottom = 11 },
+	})
+	f:SetMovable(true)
+	f:EnableMouse(true)
+	f:RegisterForDrag("LeftButton")
+	f:SetScript("OnDragStart", f.StartMoving)
+	f:SetScript("OnDragStop", f.StopMovingOrSizing)
+	f:SetFrameStrata("DIALOG")
+	f:Hide()
+
+	local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+	title:SetPoint("TOP", f, "TOP", 0, -16)
+	title:SetText("CoaForge Collector -- Received Data")
+	f.title = title
+
+	local closeBtn = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+	closeBtn:SetPoint("TOPRIGHT", f, "TOPRIGHT", -4, -4)
+	closeBtn:SetScript("OnClick", function()
+		f:Hide()
+	end)
+
+	local emptyText = f:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+	emptyText:SetPoint("TOPLEFT", f, "TOPLEFT", 16, -40)
+	emptyText:SetPoint("RIGHT", f, "RIGHT", -16, 0)
+	emptyText:SetJustifyH("LEFT")
+	emptyText:SetText("No relayed data received from anyone yet.")
+	f.emptyText = emptyText
+
+	receivedWindow = f
+	return f
+end
+
+local function PopulateReceivedWindow()
+	InitDB()
+	if not receivedWindow then
+		CreateReceivedWindow()
+	end
+
+	-- Sorted so the row order stays stable between openings -- pairs()
+	-- iteration order over CoaForgeCollectorDB.received isn't guaranteed.
+	local senders = {}
+	for sender in pairs(CoaForgeCollectorDB.received) do
+		table.insert(senders, sender)
+	end
+	table.sort(senders)
+
+	for _, row in ipairs(receivedWindowRows) do
+		row:SetText("")
+	end
+
+	if #senders == 0 then
+		receivedWindow.emptyText:Show()
+	else
+		receivedWindow.emptyText:Hide()
+		for index, sender in ipairs(senders) do
+			local count = 0
+			for _ in pairs(CoaForgeCollectorDB.received[sender]) do
+				count = count + 1
+			end
+			local lastAt = CoaForgeCollectorDB.receivedMeta[sender] and CoaForgeCollectorDB.receivedMeta[sender].lastReceivedAt
+			local lastStr = lastAt and date("%Y-%m-%d %H:%M", lastAt) or "unknown"
+			local row = EnsureReceivedWindowRow(index)
+			row:SetText(sender .. ":  " .. count .. " spell(s)  (last " .. lastStr .. ")")
+		end
+	end
+
+	local rowsNeeded = math.max(#senders, 1)
+	receivedWindow:SetHeight(60 + rowsNeeded * ROW_HEIGHT)
+end
+
+local function ToggleReceivedWindow()
+	if receivedWindow and receivedWindow:IsShown() then
+		receivedWindow:Hide()
+		return
+	end
+	PopulateReceivedWindow()
+	receivedWindow:Show()
 end
 
 if C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix then
@@ -500,6 +620,8 @@ SlashCmdList["COAFORGECOLLECTOR"] = function(input)
 			Print("Relay is currently " .. (CoaForgeCollectorDB.settings.relayEnabled and "ON" or "OFF") ..
 				". Use /cfc relay on or /cfc relay off to change it.")
 		end
+	elseif cmd == "received" then
+		ToggleReceivedWindow()
 	else
 		local scanned, newCount = ScanSpellbook()
 		local relayMsg = ""

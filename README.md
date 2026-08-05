@@ -34,6 +34,7 @@ Two manual slash commands, if you want them:
 | `/cfc relay` | Prints whether relay is currently on or off. |
 | `/cfc relay on` | Turns relay on (see "Relay" below). |
 | `/cfc relay off` | Turns relay off. |
+| `/cfc received` | Opens (or closes, if already open) a window listing everyone who's relayed data to you, how many spells from each, and when the last one arrived. |
 
 Everything accumulates in one account-wide `SavedVariables` table - playing multiple characters/classes on the same account keeps adding to the same shared data instead of each character overwriting the last.
 
@@ -41,7 +42,7 @@ Everything accumulates in one account-wide `SavedVariables` table - playing mult
 
 Off by default. If you turn it on with `/cfc relay on`, every newly scanned spell also gets sent, via a WoW addon message (not a real chat whisper, invisible to normal chat, only readable by another client running this same addon), to a small fixed list of known collector characters, whichever one happens to be online at the time. This is meant as a convenience so a submission can reach a collector directly instead of everyone needing to manually export and submit via the website themselves.
 
-On the receiving end, a small popup appears whenever data arrives: "Received N spell(s) from X". Incoming spells from a burst (a whole relayed scan) are counted and debounced into one popup rather than one per spell, and multiple popups queue up and show one at a time instead of overlapping.
+On the receiving end, a small popup appears whenever data arrives: "Received N spell(s) from X". Incoming spells from a burst (a whole relayed scan) are counted and debounced into one popup rather than one per spell, and multiple popups queue up and show one at a time instead of overlapping. That popup fades after a few seconds though, so if you want a persistent record of who's sent you what, run `/cfc received` any time to open a window listing every sender, their total spell count, and when they last sent something.
 
 A few things worth knowing before turning it on:
 
